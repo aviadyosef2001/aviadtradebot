@@ -5,11 +5,10 @@ from pybit.unified_trading import HTTP
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# משתנים רגישים מגיעים מ־Environment Variables
-BYBIT_API_KEY = os.getenv("yFco29h9mzOk5s8mB1")
-BYBIT_API_SECRET = os.getenv("VCDZSK3RyJ7aAo1EB3dbK8t5bw7tLGyyurZT")
-TELEGRAM_TOKEN = os.getenv("8174936807:AAHbmUe7cJKVLa7jGbnvemZ1xvrb-DQKzvE")
-CHAT_ID = os.getenv("5353509813")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 SYMBOLS = ["ETHUSDT", "SOLUSDT", "BTCUSDT", "AVAXUSDT", "LINKUSDT", "NEARUSDT", "DOGEUSDT"]
 TIMEFRAME = 15
@@ -177,3 +176,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     asyncio.get_event_loop().create_task(run_bot(app))
     app.run_polling()
+
