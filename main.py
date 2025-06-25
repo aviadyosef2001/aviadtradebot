@@ -5,6 +5,7 @@ from pybit.unified_trading import HTTP
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+# קריאת משתנים מהסביבה
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -31,8 +32,8 @@ def fetch_data(symbol):
     return candles["result"]["list"]
 
 def get_live_price(symbol):
-    ticker = session.get_ticker(symbol=symbol)
-    return float(ticker["result"][0]["lastPrice"])
+    tickers = session.get_tickers(category="linear", symbol=symbol)
+    return float(tickers["result"]["list"][0]["lastPrice"])
 
 def calculate_rsi(prices, period):
     gains, losses = [], []
@@ -176,4 +177,3 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     asyncio.get_event_loop().create_task(run_bot(app))
     app.run_polling()
-
