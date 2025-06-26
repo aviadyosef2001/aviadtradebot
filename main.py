@@ -24,102 +24,60 @@ VOLUME_MULTIPLIER = 1.5
 # הגדרת תזמון: ראשון–חמישי, 14:00–01:00, כל 30 דקות
 ANALYSIS_DAYS = set(range(0, 5))  # 0=ראשון … 4=חמישי
 ANALYSIS_HOURS = list(range(14, 24)) + list(range(0, 2))
-CHECK_INTERVAL = 60 * 30
+CHECK_INTERVAL = 30 * 60  # שניות
 
 # אתחול לקוחות API
 session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
 openai = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
 
-
 async def send_alert(app, message: str):
     """שליחת התראה לטלגרם"""
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
-
 async def ask_gpt(prompt: str) -> str:
     """שולח prompt ל-GPT ומחזיר תשובה"""
-    try:
-        response = await openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "אתה אנליסט שוק קריפטו מומחה בויקוף, "
-                        "מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."  
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"שגיאה בבינה מלאכותית: {e}"
-
+    resp = await openai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": (
+                "אתה אנליסט שוק קריפטו מומחה בויקוף, "
+                "מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."  
+            )},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return resp.choices[0].message.content
 
 def fetch_data(symbol: str):
     """משיכת נרות מ-Bybit"""
     data = session.get_kline(
-        category="linear",
-        symbol=symbol,
-        interval=TIMEFRAME,
-        limit=100
+        category="linear", symbol=symbol,
+        interval=TIMEFRAME, limit=100
     )
-    return data["result"]["list"]
-
+    return data.get("result", {}).get("list", [])
 
 def get_live_price(symbol: str) -> float:
-    """משיכת מחיר חי M"""
+    """משיכת מחיר חי"""
     tk = session.get_tickers(category="linear", symbol=symbol)
-    return float(tk["result"]["list"][0]["lastPrice"])
-
-
-def generate_prompt(symbol: str) -> str:
-    """בונה prompt לניתוח על ידי GPT"""
-    candles = fetch_data(symbol)
-    closes = [float(c[4]) for c in candles]
-    volumes = [float(c[5]) for c in candles]
-    price = get_live_price(symbol)
-    # מחשבים RSI פשוט
-    gains = [max(closes[i] - closes[i-1], 0) for i in range(1, len(closes))]
-    losses = [max(closes[i-1] - closes[i], 0) for i in range(1, len(closes))]
-    avg_gain = sum(gains[-RSI_PERIOD:]) / RSI_PERIOD
-    avg_loss = sum(losses[-RSI_PERIOD:]) / RSI_PERIOD
-    rsi = 100 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
-
-    prompt = f"Analyze {symbol} using Wyckoff methodology and quality filters:\n"
-    prompt += f"- Current price: {price}\n"
-    prompt += f"- RSI({RSI_PERIOD}): {rsi:.2f}\n"
-    prompt += f"- Last volume: {volumes[-1]} vs avg: {sum(volumes[-RSI_PERIOD:]) / RSI_PERIOD:.2f}\n"
-    prompt += "- Identify key support and resistance levels\n"
-    prompt += "- Detect Fair Value Gaps (FVG)\n"
-    prompt += "- Spot Break of Structure (BOS) or Springs\n"
-    prompt += "- Recognize Order Blocks or institutional footprints\n"
-    prompt += "- Assess if this is a true move or manipulation\n"
-    prompt += "Provide direction (Long/Short), entry price, stop loss, take profit, and confidence score out of 10."
-    return prompt
-
+    lst = tk.get("result", {}).get("list", [])
+    return float(lst[0]["lastPrice"]) if lst else 0.0
 
 async def analyze_market(app):
     """הרצת ניתוח על כל המטבעות לפי לוח הזמנים"""
     now = datetime.datetime.now().astimezone()
     if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
         return
-
     for symbol in SYMBOLS:
         prompt = generate_prompt(symbol)
         ai_response = await ask_gpt(prompt)
         price = get_live_price(symbol)
-        # מניעת סיגנל כפול
         last_price = recent_signals.get(symbol)
         if last_price and abs(price - last_price) < price * 0.003:
             continue
         recent_signals[symbol] = price
-
         message = f"🔎 {symbol} Analysis:\n{ai_response}"
         await send_alert(app, message)
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """מענה לשאלות ישירות"""
@@ -127,19 +85,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = await ask_gpt(question)
     await update.message.reply_text(answer)
 
+async def scheduled_analysis(context: ContextTypes.DEFAULT_TYPE):
+    """פונקציה שתופעל על ידי JobQueue"""
+    await analyze_market(context.application)
 
-async def run_bot(app):
-    """לולאה מרכזית"""
-    while True:
-        await analyze_market(app)
-        await asyncio.sleep(CHECK_INTERVAL)
-
+def generate_prompt(symbol: str) -> str:
+    candles = fetch_data(symbol)
+    closes = [float(c[4]) for c in candles]
+    volumes = [float(c[5]) for c in candles]
+    price = get_live_price(symbol)
+    gains = [max(closes[i] - closes[i-1], 0) for i in range(1, len(closes))]
+    losses = [max(closes[i-1] - closes[i], 0) for i in range(1, len(closes))]
+    avg_gain = sum(gains[-RSI_PERIOD:]) / RSI_PERIOD
+    avg_loss = sum(losses[-RSI_PERIOD:]) / RSI_PERIOD
+    rsi = 100 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
+    prompt = f"Analyze {symbol} using Wyckoff and quality filters:\n"
+    prompt += f"- Price: {price}\n"
+    prompt += f"- RSI({RSI_PERIOD}): {rsi:.2f}\n"
+    prompt += f"- Volume: last {volumes[-1]} vs avg {sum(volumes[-RSI_PERIOD:]) / RSI_PERIOD:.2f}\n"
+    prompt += "- Support/resistance, FVG, BOS/Spring, Order Blocks, manipulation?\n"
+    prompt += "Provide direction, entry, SL, TP, confidence score out of 10."
+    return prompt
 
 if __name__ == "__main__":
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
-    asyncio.create_task(run_bot(app))
+    # handler לשאלות
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # JobQueue לתזמון
+    job_queue = app.job_queue
+    job_queue.run_repeating(scheduled_analysis, interval=CHECK_INTERVAL, first=10)
+    # Start polling
     app.run_polling()
 
