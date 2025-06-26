@@ -7,11 +7,11 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from openai import OpenAI
 
 # ======================== הגדרות ========================
-BYBIT_API_KEY    = os.getenv("BYBIT_API_KEY")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID          = os.getenv("CHAT_ID")
-OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
+BYBIT_API_KEY    = os.getenv("BYBIT_API_KEY", "").strip()
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "").strip()
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "").strip()
+CHAT_ID          = os.getenv("CHAT_ID", "").strip()
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "").strip()
 
 SYMBOLS           = ["ETHUSDT","SOLUSDT","BTCUSDT","AVAXUSDT","LINKUSDT","NEARUSDT","DOGEUSDT"]
 TIMEFRAME         = 15
