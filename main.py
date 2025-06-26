@@ -1,6 +1,6 @@
 import os
-import asyncio
 import datetime
+from time import sleep
 from pybit.unified_trading import HTTP
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -25,15 +25,15 @@ CHECK_INTERVAL   = 30 * 60                               # שניות
 
 # אתחול API
 session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
-openai  = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
 
+# פונקציות עזר
 async def send_alert(app, message: str):
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
 async def ask_gpt(prompt: str) -> str:
-    # שימוש בסינכרוני create
-    resp = openai.chat.completions.create(
+    resp = openai_client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role":"system","content":"אתה אנליסט שוק קריפטו מומחה בשיטת Wyckoff, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."},
@@ -88,25 +88,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = await ask_gpt(update.message.text)
     await update.message.reply_text(answer)
 
-async def periodic_task(app):
-    while True:
-        await analyze_market(app)
-        await asyncio.sleep(CHECK_INTERVAL)
+async def scheduled_analysis(context: ContextTypes.DEFAULT_TYPE):
+    # טלאי לקריאה עקיפה
+    await analyze_market(context.application)
 
-async def main():
+# ראשית נדרוש python-telegram-bot[job-queue] ב-requirements.txt
+
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    from telegram.ext import CommandHandler
-    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.message.chat_id
-        print(f"[LOG] got /start from chat_id={chat_id}")
-        await update.message.reply_text(f"שלום! הבוט עובד. chat_id={chat_id}")
-
-    app.add_handler(CommandHandler("start", start))
+    # הוספת handlers
+    app.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("הבוט עובד!")))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    asyncio.create_task(periodic_task(app))
-    await app.run_polling()
+    # JobQueue לתזמון
+    jobq = app.job_queue
+    jobq.run_repeating(scheduled_analysis, interval=CHECK_INTERVAL, first=10)
+
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
