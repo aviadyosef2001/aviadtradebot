@@ -3,7 +3,7 @@ import asyncio
 import datetime
 from pybit.unified_trading import HTTP
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 
 # ======================== הגדרות ========================
@@ -13,9 +13,9 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID          = os.getenv("CHAT_ID")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
-SYMBOLS          = ["ETHUSDT","SOLUSDT","BTCUSDT","AVAXUSDT","LINKUSDT","NEARUSDT","DOGEUSDT"]
-TIMEFRAME        = 15
-RSI_PERIOD       = 14
+SYMBOLS           = ["ETHUSDT","SOLUSDT","BTCUSDT","AVAXUSDT","LINKUSDT","NEARUSDT","DOGEUSDT"]
+TIMEFRAME         = 15
+RSI_PERIOD        = 14
 VOLUME_MULTIPLIER = 1.5
 
 # תזמון: ראשון–חמישי, 14:00–01:00, כל 30 דקות
@@ -28,6 +28,10 @@ session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
 openai  = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
 
+# --------------------------------------
+# פונקציות עזר
+# --------------------------------------
+
 async def send_alert(app, message: str):
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
@@ -36,8 +40,11 @@ async def ask_gpt(prompt: str) -> str:
         model="gpt-4o",
         messages=[
             {
-                "role":"system",
-                "content":"אתה אנליסט שוק קריפטו מומחה בויקוף, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."
+                "role": "system",
+                "content": (
+                    "אתה אנליסט שוק קריפטו מומחה בשיטת Wyckoff, "
+                    "מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."
+                )
             },
             {"role":"user","content":prompt}
         ]
@@ -55,18 +62,73 @@ async def get_live_price(symbol: str) -> float:
 
 async def generate_prompt(symbol: str) -> str:
     candles = await fetch_data(symbol)
-    closes = [float(c[4]) for c in candles]
+    closes  = [float(c[4]) for c in candles]
     volumes = [float(c[5]) for c in candles]
-    price = await get_live_price(symbol)
+    price   = await get_live_price(symbol)
 
-    gains  = [max(closes[i]-closes[i-1],0) for i in range(1,len(closes))]
-    losses = [max(closes[i-1]-closes[i],0) for i in range(1,len(closes))]
+    gains   = [max(closes[i]-closes[i-1],0) for i in range(1,len(closes))]
+    losses  = [max(closes[i-1]-closes[i],0) for i in range(1,len(closes))]
     avg_gain = sum(gains[-RSI_PERIOD:])/RSI_PERIOD if len(gains)>=RSI_PERIOD else 0
     avg_loss = sum(losses[-RSI_PERIOD:])/RSI_PERIOD if len(losses)>=RSI_PERIOD else 0
-    rsi = 100 if avg_loss==0 else 100-(100/(1+avg_gain/avg_loss))
+    rsi = 100 if avg_loss==0 else 100 - (100/(1 + avg_gain/avg_loss))
 
-    prompt = f"Analyze {symbol} with Wyckoff and quality filters:\n"
+    prompt  = f"Analyze {symbol} with Wyckoff & quality filters:\n"
     prompt += f"- Price: {price}\n- RSI({RSI_PERIOD}): {rsi:.2f}\n"
-    pro
+    prompt += f"- Volume: last {volumes[-1] if volumes else 0} vs avg {sum(volumes[-RSI_PERIOD:])/RSI_PERIOD if len(volumes)>=RSI_PERIOD else 0:.2f}\n"
+    prompt += "- Identify support/resistance, FVG, BOS/Spring, Order Blocks, manipulation?\n"
+    prompt += "Provide direction (Long/Short), entry price, stop loss, take profit, and confidence score (1-10)."
+    return prompt
 
+# --------------------------------------
+# ניתוח מחזורי ושאלות חיות
+# --------------------------------------
 
+async def analyze_market(app):
+    now = datetime.datetime.now().astimezone()
+    if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
+        return
+
+    for symbol in SYMBOLS:
+        prompt      = await generate_prompt(symbol)
+        ai_response = await ask_gpt(prompt)
+        price       = await get_live_price(symbol)
+        last_price  = recent_signals.get(symbol)
+        # מניעת סיגנלים כפולים
+        if last_price and abs(price - last_price) < price * 0.003:
+            continue
+        recent_signals[symbol] = price
+        await send_alert(app, f"🔎 {symbol} Analysis:\n{ai_response}")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = await ask_gpt(update.message.text)
+    await update.message.reply_text(answer)
+
+async def periodic_task(app):
+    while True:
+        await analyze_market(app)
+        await asyncio.sleep(CHECK_INTERVAL)
+
+# --------------------------------------
+# entry point
+# --------------------------------------
+
+async def main():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # אבחון /start
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.message.chat_id
+        print(f"[LOG] got /start from chat_id={chat_id}")
+        await update.message.reply_text(f"שלום! הבוט עובד. chat_id={chat_id}")
+
+    app.add_handler(CommandHandler("start", start))
+    # handler להודעות טקסט
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # משימה מחזורית ברקע
+    asyncio.create_task(periodic_task(app))
+
+    # התחלת poll
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())
