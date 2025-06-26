@@ -7,25 +7,25 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 
 # ======================== הגדרות ========================
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
+BYBIT_API_KEY    = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID          = os.getenv("CHAT_ID")
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
-SYMBOLS = ["ETHUSDT","SOLUSDT","BTCUSDT","AVAXUSDT","LINKUSDT","NEARUSDT","DOGEUSDT"]
-TIMEFRAME = 15
-RSI_PERIOD = 14
+SYMBOLS          = ["ETHUSDT","SOLUSDT","BTCUSDT","AVAXUSDT","LINKUSDT","NEARUSDT","DOGEUSDT"]
+TIMEFRAME        = 15
+RSI_PERIOD       = 14
 VOLUME_MULTIPLIER = 1.5
 
 # תזמון: ראשון–חמישי, 14:00–01:00, כל 30 דקות
-ANALYSIS_DAYS = set(range(0,5))
-ANALYSIS_HOURS = list(range(14,24)) + list(range(0,2))
-CHECK_INTERVAL = 30 * 60
+ANALYSIS_DAYS    = set(range(0,5))                                   # 0=ראשון … 4=חמישי
+ANALYSIS_HOURS   = list(range(14,24)) + list(range(0,2))             # 14–23 ו-0–1
+CHECK_INTERVAL   = 30 * 60                                           # שניות
 
 # אתחול API
 session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
-openai = OpenAI(api_key=OPENAI_API_KEY)
+openai  = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
 
 async def send_alert(app, message: str):
@@ -55,12 +55,14 @@ async def generate_prompt(symbol: str) -> str:
     closes = [float(c[4]) for c in candles]
     volumes = [float(c[5]) for c in candles]
     price = await get_live_price(symbol)
-    gains = [max(closes[i]-closes[i-1],0) for i in range(1,len(closes))]
+
+    gains  = [max(closes[i]-closes[i-1],0) for i in range(1,len(closes))]
     losses = [max(closes[i-1]-closes[i],0) for i in range(1,len(closes))]
     avg_gain = sum(gains[-RSI_PERIOD:])/RSI_PERIOD if len(gains)>=RSI_PERIOD else 0
     avg_loss = sum(losses[-RSI_PERIOD:])/RSI_PERIOD if len(losses)>=RSI_PERIOD else 0
     rsi = 100 if avg_loss==0 else 100-(100/(1+avg_gain/avg_loss))
-    prompt = f"Analyze {symbol} with Wyckoff and quality filters:\n"
+
+    prompt  = f"Analyze {symbol} with Wyckoff and quality filters:\n"
     prompt += f"- Price: {price}\n- RSI({RSI_PERIOD}): {rsi:.2f}\n"
     prompt += f"- Volume: last {volumes[-1] if volumes else 0} vs avg {sum(volumes[-RSI_PERIOD:])/RSI_PERIOD if len(volumes)>=RSI_PERIOD else 0:.2f}\n"
     prompt += "- Identify support/resistance, FVG, BOS/Spring, Order Blocks, manipulation?\n"
@@ -69,16 +71,21 @@ async def generate_prompt(symbol: str) -> str:
 
 async def analyze_market(app):
     now = datetime.datetime.now().astimezone()
+    # הפסק אם לא בימים/שעות המוגדרים
     if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
         return
+
     for symbol in SYMBOLS:
-        prompt = await generate_prompt(symbol)
+        prompt     = await generate_prompt(symbol)
         ai_response = await ask_gpt(prompt)
-        price = await get_live_price(symbol)
-        last = recent_signals.get(symbol)
+        price      = await get_live_price(symbol)
+        last       = recent_signals.get(symbol)
+
+        # מניעת סיגנל כפול
         if last and abs(price - last) < price * 0.003:
             continue
         recent_signals[symbol] = price
+
         await send_alert(app, f"🔎 {symbol} Analysis:\n{ai_response}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
