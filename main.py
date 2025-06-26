@@ -32,17 +32,10 @@ async def send_alert(app, message: str):
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
 async def ask_gpt(prompt: str) -> str:
-    # השתמש ב-acreate במקום create לקבלת coroutine
     resp = await openai.chat.completions.acreate(
         model="gpt-4o",
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "אתה אנליסט שוק קריפטו מומחה בשיטת Wyckoff, "
-                    "מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."
-                )
-            },
+            {"role":"system","content":"אתה אנליסט שוק קריפטו מומחה בשיטת Wyckoff, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."},
             {"role":"user","content":prompt}
         ]
     )
@@ -53,7 +46,7 @@ async def fetch_data(symbol: str):
     return data.get("result", {}).get("list", [])
 
 async def get_live_price(symbol: str) -> float:
-    tk  = session.get_tickers(category="linear", symbol=symbol)
+    tk = session.get_tickers(category="linear", symbol=symbol)
     lst = tk.get("result", {}).get("list", [])
     return float(lst[0]["lastPrice"]) if lst else 0.0
 
@@ -99,28 +92,24 @@ async def periodic_task(app):
         await analyze_market(app)
         await asyncio.sleep(CHECK_INTERVAL)
 
-# --------------------------------------
-# entry point without asyncio.run to avoid loop nesting
-# --------------------------------------
-
-def main():
+async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # אבחון via /start
+    # /start לאבחון
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.message.chat_id
         print(f"[LOG] got /start from chat_id={chat_id}")
         await update.message.reply_text(f"שלום! הבוט עובד. chat_id={chat_id}")
 
+    from telegram.ext import CommandHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # schedule periodic task after init
-    async def on_startup(app_instance):
-        asyncio.create_task(periodic_task(app_instance))
 
-    app.post_init(on_startup)
-    app.run_polling()
+    # יצירת משימה מחזורית
+    asyncio.create_task(periodic_task(app))
+
+    # הפעלת poll
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main())
