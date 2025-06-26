@@ -19,11 +19,11 @@ RSI_PERIOD       = 14
 VOLUME_MULTIPLIER = 1.5
 
 # תזמון: ראשון–חמישי, 14:00–01:00, כל 30 דקות
-ANALYSIS_DAYS    = set(range(0,5))                                   # 0=ראשון … 4=חמישי
-ANALYSIS_HOURS   = list(range(14,24)) + list(range(0,2))             # 14–23 ו-0–1
-CHECK_INTERVAL   = 30 * 60                                           # שניות
+ANALYSIS_DAYS    = set(range(0,5))                       # 0=ראשון … 4=חמישי
+ANALYSIS_HOURS   = list(range(14,24)) + list(range(0,2)) # 14–23 ו־0–1
+CHECK_INTERVAL   = 30 * 60                               # שניות
 
-# אתחול API
+# אתחול לקוחות API
 session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
 openai  = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
@@ -35,7 +35,10 @@ async def ask_gpt(prompt: str) -> str:
     resp = await openai.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role":"system","content":"אתה אנליסט שוק קריפטו מומחה בויקוף, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."},
+            {
+                "role":"system",
+                "content":"אתה אנליסט שוק קריפטו מומחה בויקוף, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."
+            },
             {"role":"user","content":prompt}
         ]
     )
@@ -62,48 +65,8 @@ async def generate_prompt(symbol: str) -> str:
     avg_loss = sum(losses[-RSI_PERIOD:])/RSI_PERIOD if len(losses)>=RSI_PERIOD else 0
     rsi = 100 if avg_loss==0 else 100-(100/(1+avg_gain/avg_loss))
 
-    prompt  = f"Analyze {symbol} with Wyckoff and quality filters:\n"
+    prompt = f"Analyze {symbol} with Wyckoff and quality filters:\n"
     prompt += f"- Price: {price}\n- RSI({RSI_PERIOD}): {rsi:.2f}\n"
-    prompt += f"- Volume: last {volumes[-1] if volumes else 0} vs avg {sum(volumes[-RSI_PERIOD:])/RSI_PERIOD if len(volumes)>=RSI_PERIOD else 0:.2f}\n"
-    prompt += "- Identify support/resistance, FVG, BOS/Spring, Order Blocks, manipulation?\n"
-    prompt += "Provide direction, entry, SL, TP, confidence (1-10)."
-    return prompt
-
-async def analyze_market(app):
-    now = datetime.datetime.now().astimezone()
-    # הפסק אם לא בימים/שעות המוגדרים
-    if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
-        return
-
-    for symbol in SYMBOLS:
-        prompt     = await generate_prompt(symbol)
-        ai_response = await ask_gpt(prompt)
-        price      = await get_live_price(symbol)
-        last       = recent_signals.get(symbol)
-
-        # מניעת סיגנל כפול
-        if last and abs(price - last) < price * 0.003:
-            continue
-        recent_signals[symbol] = price
-
-        await send_alert(app, f"🔎 {symbol} Analysis:\n{ai_response}")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    answer = await ask_gpt(update.message.text)
-    await update.message.reply_text(answer)
-
-async def periodic_task(app):
-    while True:
-        await analyze_market(app)
-        await asyncio.sleep(CHECK_INTERVAL)
-
-async def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    asyncio.create_task(periodic_task(app))
-    await app.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    pro
 
 
