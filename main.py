@@ -23,20 +23,17 @@ ANALYSIS_DAYS    = set(range(0,5))                       # 0=ראשון … 4=ח
 ANALYSIS_HOURS   = list(range(14,24)) + list(range(0,2)) # 14–23 ו־0–1
 CHECK_INTERVAL   = 30 * 60                               # שניות
 
-# אתחול לקוחות API
+# אתחול API
 session = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
 openai  = OpenAI(api_key=OPENAI_API_KEY)
 recent_signals = {}
-
-# --------------------------------------
-# פונקציות עזר
-# --------------------------------------
 
 async def send_alert(app, message: str):
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
 async def ask_gpt(prompt: str) -> str:
-    resp = await openai.chat.completions.create(
+    # השתמש ב-acreate במקום create לקבלת coroutine
+    resp = await openai.chat.completions.acreate(
         model="gpt-4o",
         messages=[
             {
@@ -56,7 +53,7 @@ async def fetch_data(symbol: str):
     return data.get("result", {}).get("list", [])
 
 async def get_live_price(symbol: str) -> float:
-    tk = session.get_tickers(category="linear", symbol=symbol)
+    tk  = session.get_tickers(category="linear", symbol=symbol)
     lst = tk.get("result", {}).get("list", [])
     return float(lst[0]["lastPrice"]) if lst else 0.0
 
@@ -70,30 +67,24 @@ async def generate_prompt(symbol: str) -> str:
     losses  = [max(closes[i-1]-closes[i],0) for i in range(1,len(closes))]
     avg_gain = sum(gains[-RSI_PERIOD:])/RSI_PERIOD if len(gains)>=RSI_PERIOD else 0
     avg_loss = sum(losses[-RSI_PERIOD:])/RSI_PERIOD if len(losses)>=RSI_PERIOD else 0
-    rsi = 100 if avg_loss==0 else 100 - (100/(1 + avg_gain/avg_loss))
+    rsi      = 100 if avg_loss==0 else 100 - (100/(1 + avg_gain/avg_loss))
 
     prompt  = f"Analyze {symbol} with Wyckoff & quality filters:\n"
     prompt += f"- Price: {price}\n- RSI({RSI_PERIOD}): {rsi:.2f}\n"
     prompt += f"- Volume: last {volumes[-1] if volumes else 0} vs avg {sum(volumes[-RSI_PERIOD:])/RSI_PERIOD if len(volumes)>=RSI_PERIOD else 0:.2f}\n"
     prompt += "- Identify support/resistance, FVG, BOS/Spring, Order Blocks, manipulation?\n"
-    prompt += "Provide direction (Long/Short), entry price, stop loss, take profit, and confidence score (1-10)."
+    prompt += "Provide direction, entry, SL, TP, confidence (1-10)."
     return prompt
-
-# --------------------------------------
-# ניתוח מחזורי ושאלות חיות
-# --------------------------------------
 
 async def analyze_market(app):
     now = datetime.datetime.now().astimezone()
     if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
         return
-
     for symbol in SYMBOLS:
         prompt      = await generate_prompt(symbol)
         ai_response = await ask_gpt(prompt)
         price       = await get_live_price(symbol)
         last_price  = recent_signals.get(symbol)
-        # מניעת סיגנלים כפולים
         if last_price and abs(price - last_price) < price * 0.003:
             continue
         recent_signals[symbol] = price
@@ -109,26 +100,27 @@ async def periodic_task(app):
         await asyncio.sleep(CHECK_INTERVAL)
 
 # --------------------------------------
-# entry point
+# entry point without asyncio.run to avoid loop nesting
 # --------------------------------------
 
-async def main():
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # אבחון /start
+    # אבחון via /start
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.message.chat_id
         print(f"[LOG] got /start from chat_id={chat_id}")
         await update.message.reply_text(f"שלום! הבוט עובד. chat_id={chat_id}")
 
     app.add_handler(CommandHandler("start", start))
-    # handler להודעות טקסט
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # משימה מחזורית ברקע
-    asyncio.create_task(periodic_task(app))
+    # schedule periodic task after init
+    async def on_startup(app_instance):
+        asyncio.create_task(periodic_task(app_instance))
 
-    # התחלת poll
-    await app.run_polling()
+    app.post_init(on_startup)
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+
