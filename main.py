@@ -32,7 +32,8 @@ async def send_alert(app, message: str):
     await app.bot.send_message(chat_id=CHAT_ID, text=message)
 
 async def ask_gpt(prompt: str) -> str:
-    resp = await openai.chat.completions.acreate(
+    # שימוש בסינכרוני create
+    resp = openai.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role":"system","content":"אתה אנליסט שוק קריפטו מומחה בשיטת Wyckoff, מזהה תמיכות/התנגדויות, FVG, BOS, Springs, Order Blocks ומניפולציות."},
@@ -95,20 +96,16 @@ async def periodic_task(app):
 async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # /start לאבחון
+    from telegram.ext import CommandHandler
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.message.chat_id
         print(f"[LOG] got /start from chat_id={chat_id}")
         await update.message.reply_text(f"שלום! הבוט עובד. chat_id={chat_id}")
 
-    from telegram.ext import CommandHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # יצירת משימה מחזורית
     asyncio.create_task(periodic_task(app))
-
-    # הפעלת poll
     await app.run_polling()
 
 if __name__ == "__main__":
