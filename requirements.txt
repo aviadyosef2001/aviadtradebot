@@ -1,4 +1,5 @@
-python-telegram-bot==20.6
-pybit==3.3.0
-openai
-python-dotenv
+-python-telegram-bot==20.6
+-pybit==3.3.0
++python-telegram-bot==20.6
++pybit>=2.2.2
+ openai
