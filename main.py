@@ -10,6 +10,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from openai import OpenAI
+import re
 
 # ======================== הגדרות ========================
 BYBIT_API_KEY    = os.getenv("BYBIT_API_KEY", "").strip()
@@ -95,4 +96,62 @@ def generate_prompt(symbol: str) -> str:
     prompt += f"- מחיר נוכחי אמיתי: {price}\n"
     prompt += f"- RSI({RSI_PERIOD}): {rsi:.2f}\n"
     prompt += f"- ווליום: {volumes[-1] if volumes else 0} vs ממוצע {avg_vol:.2f}\n"
-    prompt += "- זיהוי תמוכו
+    prompt += "- זיהוי תמיכות/התנגדויות, FVG, BOS/Spring, Order Blocks ומניפולציות.\n"
+    prompt += "אנא ספק בתגובה בלבד: כיוון (לונג/שורט), כניסה, SL, TP וציון איכות (1–10)."
+    return prompt
+
+async def analyze_market(context: ContextTypes.DEFAULT_TYPE):
+    app = context.application
+    now = datetime.datetime.now()
+    if now.weekday() not in ANALYSIS_DAYS or now.hour not in ANALYSIS_HOURS:
+        return
+
+    for symbol in SYMBOLS:
+        price = get_live_price(symbol)
+        trade = active_trades.get(symbol)
+        if trade:
+            dir_ = trade['direction']
+            sl_price = trade['sl']
+            if (dir_ == 'לונג' and price <= sl_price) or (dir_ == 'שורט' and price >= sl_price):
+                await send_alert(app, f"🚨 יציאה מעסקת {symbol}: מחיר נוכחי {price:.4f} חרג מ-SL {sl_price:.4f}")
+                del active_trades[symbol]
+                continue
+
+        prompt      = generate_prompt(symbol)
+        ai_response = ask_gpt(prompt)
+
+        m_dir = re.search(r'כיוון[: ]+(לונג|שורט)', ai_response)
+        m_ent = re.search(r'כניסה[: ]+([0-9\.]+)', ai_response)
+        m_sl  = re.search(r'SL[: ]+([0-9\.]+)', ai_response)
+        m_tp  = re.search(r'TP[: ]+([0-9\.]+)', ai_response)
+        if m_dir and m_ent and m_sl and m_tp:
+            direction = m_dir.group(1)
+            entry     = float(m_ent.group(1))
+            sl_p      = float(m_sl.group(1))
+            tp_p      = float(m_tp.group(1))
+            prev = active_trades.get(symbol)
+            if not prev or prev['direction']!=direction or abs(prev['entry']-entry)>price*0.005:
+                active_trades[symbol] = {'direction':direction,'entry':entry,'sl':sl_p,'tp':tp_p}
+                await send_alert(app, f"📢 ניתוח {symbol}:\n{ai_response}")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ans = ask_gpt(update.message.text)
+    await update.message.reply_text(ans)
+
+def main():
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("שלום! הבוט חי ועובד בעברית.")
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # JobQueue
+    jq = app.job_queue
+    jq.run_repeating(analyze_market, interval=CHECK_INTERVAL, first=10)
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
